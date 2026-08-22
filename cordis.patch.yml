@@ -1,0 +1,6 @@
+# dsh-cost-governor bundle patch — inserted into the host composition by
+# `dsh plugin add`. The plugin registers the `costUsage` projection and the
+# `usageCost` service; its browser UI ships via the `dsh.client` manifest.
+- insert:
+    - id: cost-governor
+      name: dsh-cost-governor
