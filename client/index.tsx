@@ -1,121 +1,100 @@
 /**
- * Client entry — registers the "Usage & Cost" settings section and a budget HUD
- * slot, and wires live data from the `costUsage` projection stream + settings
- * scope into the presentational components.
+ * Client entry — registers the "Usage & Cost" settings section and a budget
+ * HUD, and wires live data into the presentational components.
  *
- * Slot registration follows the confirmed DSH contract:
- *   `ctx.slots.register({ name, id, order, locale, inject }, Component)`
- * returns an unregister function (disposal rides the caller's fiber).
+ * Data sources (confirmed against the DSH client runtime):
+ * - `useProjection('costUsage')` — the CURRENT session's folded raw buckets
+ *   (session-scoped standard kit; `undefined` = capability absent). The
+ *   per-session cost is derived client-side with the same `computeViewCost`
+ *   the host uses, so host and client never disagree.
+ * - The GLOBAL cross-session rollup and budget status live on the host
+ *   `usageCost` service and must be exposed as a Typert Remote — the one
+ *   remaining web-build integration (see PUBLISHING.md §4). Until then the
+ *   dashboard shows the current session's spend; the budget ring needs the
+ *   Remote.
  *
- * NOTE ON WIRING: the exact projection/settings read hooks a settings section
- * receives are injected through `inject` (cf. `PropsRuntime`/`PropsLocale` in
- * `@deepseek-ai/dsh-client-ui-slots`). The container below documents the shape;
- * the two hook names (`useProjection`, `useSettingsScope`) are the integration
- * points to confirm against the official client-plugin docs before first build.
+ * Slot registration follows the confirmed contract:
+ *   `ctx.slots.register({ name, id, order, locale, inject }, Component)`.
  *
  * @module dsh-cost-governor/client
  */
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Dashboard } from "./components/Dashboard";
 import { Hud } from "./components/Hud";
 import { BudgetEditor } from "./components/BudgetEditor";
 import { PriceEditor } from "./components/PriceEditor";
-import type { BudgetConfig, BudgetStatus, CostRollup } from "../src/types";
+import { computeViewCost } from "../src/pricing/price.js";
+import type { CostUsageView } from "../src/projection/cost-usage.js";
+import type { UseProjection } from "@deepseek-ai/dsh-client-runtime/client";
+import type { BudgetStatus, CostRollup } from "../src/types.js";
 
 export const name = "cost-governor-client";
 
-// ── Minimal injected-runtime contracts (documented; verify against dsh docs) ──
-interface ProjectionSource {
-  /** Returns the live `costUsage` view for a session (or null). */
-  useCostUsage: () => { byModel: Record<string, unknown> } | null;
-}
-interface SettingsSource {
-  /** Returns budget config + price catalog from the settings namespace. */
-  useGovernorSettings: () => {
-    budget: BudgetConfig;
-    priceCatalog: Record<string, unknown>;
-    currency: string;
-  };
-}
-
+/** A session-scoped slot's injected projection reader. */
 export interface DashboardContainerProps {
   close: () => void;
-  projection?: ProjectionSource;
-  settings?: SettingsSource;
+  /** Current-session projection reader (session standard kit). */
+  useProjection?: UseProjection;
+  /** Global budget status — supplied by the host Remote once wired. */
+  budgetStatus?: BudgetStatus | null;
+  currency?: string;
 }
 
-/** Demo data so the section renders meaningfully before live data is wired. */
-function demoRollup(): CostRollup {
+/** Derive a per-session cost rollup from the folded `costUsage` view. */
+function rollupFromView(view: CostUsageView | undefined): CostRollup | null {
+  if (!view || Object.keys(view.byModel).length === 0) return null;
+  const { total, perModel } = computeViewCost(view.byModel, {});
+  // NOTE: the client has no price catalog; a real client passes the host's
+  // catalog through the settings scope. With an empty catalog every model is
+  // "unpriced", so this fallback shows tokens and a zero cost until wired.
+  let input = 0;
+  let output = 0;
+  let tokens = 0;
+  for (const b of Object.values(view.byModel)) {
+    input += b.input + b.cacheRead + b.cacheWrite;
+    output += b.output;
+    tokens += b.input + b.output + b.cacheRead + b.cacheWrite;
+  }
   return {
-    totalCostUsd: 3.42,
-    totalInputTokens: 482_000,
-    totalOutputTokens: 96_400,
-    totalTokens: 578_400,
-    byModel: [
-      { key: "deepseek/deepseek-chat", provider: "deepseek", model: "deepseek-chat", buckets: { input: 400_000, output: 80_000, cacheRead: 12_000, cacheWrite: 0, reasoning: 0 }, costUsd: 2.19, unpriced: [] },
-      { key: "anthropic/claude-3-7-sonnet", provider: "anthropic", model: "claude-3-7-sonnet", buckets: { input: 60_000, output: 12_000, cacheRead: 10_000, cacheWrite: 0, reasoning: 4_400 }, costUsd: 1.23, unpriced: [] },
-    ],
-    unpriced: [],
+    totalCostUsd: total,
+    totalInputTokens: input,
+    totalOutputTokens: output,
+    totalTokens: tokens,
+    byModel: Object.entries(view.byModel).map(([key, buckets]) => {
+      const slash = key.indexOf("/");
+      return {
+        key,
+        provider: slash < 0 ? "" : key.slice(0, slash),
+        model: slash < 0 ? key : key.slice(slash + 1),
+        buckets,
+        costUsd: perModel[key] ?? 0,
+        unpriced: perModel[key] === undefined ? [key] : [],
+      };
+    }),
+    unpriced: Object.keys(view.byModel),
   };
 }
 
 export function DashboardContainer(props: DashboardContainerProps) {
-  const [rollup] = useState<CostRollup | null>(demoRollup());
-  const [status, setStatus] = useState<BudgetStatus | null>({
-    period: "monthly", budgetUsd: 20, spentUsd: 3.42, remainingUsd: 16.58,
-    ratio: 0.171, state: "ok", hardAction: "notify-only", blocked: false,
-  });
-  const [view, setView] = useState<"dashboard" | "budget" | "prices">("dashboard");
+  const { useProjection, budgetStatus, currency = "USD", close } = props;
+  const costUsage = useProjection?.("costUsage") as CostUsageView | undefined;
+  const rollup = rollupFromView(costUsage);
 
-  // Live wiring (integration point): replace demo state with projection + settings.
-  useEffect(() => {
-    const usage = props.projection?.useCostUsage?.();
-    if (usage && Object.keys(usage.byModel).length > 0) {
-      // Convert the raw projection view into a CostRollup here.
-    }
-    const s = props.settings?.useGovernorSettings?.();
-    if (s) {
-      // setStatus(compute from s.budget + current spend)
-    }
-  }, [props.projection, props.settings]);
-
-  if (view === "budget") {
-    return (
-      <BudgetEditor
-        value={status ? { period: status.period, budgetUsd: status.budgetUsd, warnRatio: 0.8, hardRatio: 1.0, hardAction: status.hardAction } : { period: "monthly", budgetUsd: 20, warnRatio: 0.8, hardRatio: 1.0, hardAction: "notify-only" }}
-        onSave={(next) => { setStatus((s) => s && { ...s, budgetUsd: next.budgetUsd, period: next.period }); setView("dashboard"); }}
-        onCancel={() => setView("dashboard")}
-      />
-    );
-  }
-  if (view === "prices") {
-    return (
-      <PriceEditor
-        catalog={{}}
-        onSave={() => setView("dashboard")}
-        onCancel={() => setView("dashboard")}
-      />
-    );
-  }
-
+  // Global budget/rollup arrive via the host Remote; fall back to null until then.
   return (
     <Dashboard
-      status={status}
+      status={budgetStatus ?? null}
       rollup={rollup}
-      daily={[
-        { day: "2026-08-10", costUsd: 0.4 },
-        { day: "2026-08-11", costUsd: 0.9 },
-        { day: "2026-08-12", costUsd: 0.6 },
-        { day: "2026-08-13", costUsd: 1.52 },
-      ]}
-      onOpenBudget={() => setView("budget")}
-      onOpenPrices={() => setView("prices")}
-      tip="deepseek-chat is 8.2× cheaper per token than claude-3-7-sonnet for this workload."
+      daily={[]}
+      currency={currency}
+      onOpenBudget={() => {}}
+      onOpenPrices={() => {}}
+      tip={rollup ? "Current-session spend. Global budget arrives once the host Remote is wired." : "Send a message in a session to start measuring its cost."}
     />
   );
 }
 
-/** The settings-section registrant (confirm the exact `render`/locale wiring on first build). */
+/** Settings-section registrant (confirm the exact `render`/locale wiring on first build). */
 export const settingsSectionEntry = {
   name: "cost-governor.settings-section",
   inject: ["slots"],
