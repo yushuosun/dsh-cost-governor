@@ -76,7 +76,7 @@ export interface CostGovernorConfig {
 }
 
 export class CostGovernor extends Service {
-  static inject = ["sessionProjections", "sessions", "llm"];
+  static inject = ["sessions", "llm"];
   static Config = Config;
 
   private readonly config: CostGovernorConfig;
@@ -96,20 +96,24 @@ export class CostGovernor extends Service {
   }
 
   async [Service.init]() {
-    // Durable projection (removed automatically on unload).
-    this.ctx.sessionProjections.register(costUsageProjectionDefinition);
+    // Optional projection seam: without it the plugin still loads, but is
+    // inert (no data source). Registration, cold-start seed, and the live
+    // feed ride a child context that only exists when the seam does.
+    this.ctx.inject(["sessionProjections"], (projectionCtx) => {
+      projectionCtx.sessionProjections.register(costUsageProjectionDefinition);
 
-    // Cold-start seed: every live session's already-folded view.
-    for (const session of this.ctx.sessions.list()) {
-      const view = this.ctx.sessionProjections.snapshot(session).values
-        .costUsage as CostUsageView | undefined;
-      if (view) this.adopt(session.id, session.header.cwd ?? "default", view);
-    }
+      // Cold-start seed: every live session's already-folded view.
+      for (const session of this.ctx.sessions.list()) {
+        const view = projectionCtx.sessionProjections.snapshot(session).values
+          .costUsage as CostUsageView | undefined;
+        if (view) this.adopt(session.id, session.header.cwd ?? "default", view);
+      }
 
-    // Live feed: replace a session's contribution whenever its fold changes.
-    this.ctx.sessionProjections.onChanged((session, key, value) => {
-      if (key !== "costUsage") return;
-      this.adopt(session.id, session.header.cwd ?? "default", value as CostUsageView);
+      // Live feed: replace a session's contribution whenever its fold changes.
+      projectionCtx.sessionProjections.onChanged((session, key, value) => {
+        if (key !== "costUsage") return;
+        this.adopt(session.id, session.header.cwd ?? "default", value as CostUsageView);
+      });
     });
 
     // Notify on threshold crossings (fail-soft, fire-and-forget).
