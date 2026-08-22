@@ -14,13 +14,13 @@ import {
   costUsageProjectionDefinition,
   modelKey,
   usageToBuckets,
-} from "./projection/cost-usage";
-import { DEFAULT_PRICE_CATALOG } from "./pricing/catalog";
-import type { ModelPrice } from "./pricing/price";
-import { CostLedger } from "./governor/ledger";
-import { BudgetGovernor, dayKeyOf, periodKeyOf } from "./governor/budget";
-import { Notifier } from "./governor/notify";
-import type { BudgetConfig, BudgetStatus } from "./types";
+} from "./projection/cost-usage.js";
+import { DEFAULT_PRICE_CATALOG } from "./pricing/catalog.js";
+import type { ModelPrice } from "./pricing/price.js";
+import { CostLedger } from "./governor/ledger.js";
+import { BudgetGovernor, dayKeyOf, periodKeyOf } from "./governor/budget.js";
+import { Notifier } from "./governor/notify.js";
+import type { BudgetConfig, BudgetStatus } from "./types.js";
 
 export const name = "cost-governor";
 

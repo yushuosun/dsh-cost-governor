@@ -5,8 +5,8 @@
  *
  * @module dsh-cost-governor/pricing
  */
-import type { TokenBuckets } from "../projection/cost-usage";
-import { billedInputTokens } from "../projection/cost-usage";
+import type { TokenBuckets } from "../projection/cost-usage.js";
+import { billedInputTokens } from "../projection/cost-usage.js";
 
 /** Per-1M-token USD price for one provider/model route. */
 export interface ModelPrice {

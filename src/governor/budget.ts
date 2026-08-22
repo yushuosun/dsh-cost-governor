@@ -11,7 +11,7 @@
  * @module dsh-cost-governor/governor
  */
 import type { Context } from "@deepseek-ai/cordis";
-import type { BudgetConfig, BudgetStatus, HardAction } from "../types";
+import type { BudgetConfig, BudgetStatus, HardAction } from "../types.js";
 
 /** Declared cordis events this plugin emits (consumed by UI and notifiers). */
 declare module "@deepseek-ai/cordis" {

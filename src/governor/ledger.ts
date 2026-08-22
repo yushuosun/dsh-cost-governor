@@ -10,9 +10,9 @@
  * @module dsh-cost-governor/governor
  */
 import type { SessionId } from "@deepseek-ai/dsh-session";
-import { emptyBuckets, type TokenBuckets } from "../projection/cost-usage";
-import { computeViewCost, type PriceCatalog } from "../pricing/price";
-import type { CostRollup, ModelAggregate } from "../types";
+import { emptyBuckets, type TokenBuckets } from "../projection/cost-usage.js";
+import { computeViewCost, type PriceCatalog } from "../pricing/price.js";
+import type { CostRollup, ModelAggregate } from "../types.js";
 
 export interface BucketMap {
   [modelKey: string]: TokenBuckets;

@@ -11,7 +11,7 @@
  *
  * @module dsh-cost-governor/pricing
  */
-import type { PriceCatalog } from "./price";
+import type { PriceCatalog } from "./price.js";
 
 export const DEFAULT_PRICE_CATALOG: PriceCatalog = {
   // ── DeepSeek ────────────────────────────────────────────────

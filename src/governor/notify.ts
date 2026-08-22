@@ -5,7 +5,7 @@
  *
  * @module dsh-cost-governor/governor
  */
-import type { BudgetStatus } from "../types";
+import type { BudgetStatus } from "../types.js";
 
 export class Notifier {
   constructor(private readonly webhookUrl?: string) {}
