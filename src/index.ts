@@ -12,11 +12,16 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import type { SessionId } from "@deepseek-ai/dsh-session";
 import {
+  isAgentLoopRequest,
+  type GenerateOptions,
+  type StreamChunk,
+} from "@deepseek-ai/dsh-llm";
+import {
   costUsageProjectionDefinition,
   type CostUsageView,
 } from "./projection/cost-usage.js";
 import { DEFAULT_PRICE_CATALOG } from "./pricing/catalog.js";
-import type { ModelPrice } from "./pricing/price.js";
+import type { ModelPrice, PriceCatalog } from "./pricing/price.js";
 import { CostLedger } from "./governor/ledger.js";
 import { BudgetGovernor, periodKeyOf } from "./governor/budget.js";
 import { Notifier } from "./governor/notify.js";
@@ -71,10 +76,11 @@ export interface CostGovernorConfig {
 }
 
 export class CostGovernor extends Service {
-  static inject = ["sessionProjections", "sessions"];
+  static inject = ["sessionProjections", "sessions", "llm"];
   static Config = Config;
 
   private readonly config: CostGovernorConfig;
+  private readonly catalog: PriceCatalog;
   private readonly ledger: CostLedger;
   private readonly governor: BudgetGovernor;
   private readonly notifier: Notifier;
@@ -83,8 +89,8 @@ export class CostGovernor extends Service {
   constructor(ctx: Context, config: CostGovernorConfig) {
     super(ctx, "usageCost");
     this.config = config;
-    const catalog = { ...DEFAULT_PRICE_CATALOG, ...(config.priceCatalog ?? {}) };
-    this.ledger = new CostLedger(catalog);
+    this.catalog = { ...DEFAULT_PRICE_CATALOG, ...(config.priceCatalog ?? {}) };
+    this.ledger = new CostLedger(this.catalog);
     this.governor = new BudgetGovernor(ctx, config.budget);
     this.notifier = new Notifier(config.notifyWebhook);
   }
@@ -109,6 +115,53 @@ export class CostGovernor extends Service {
     // Notify on threshold crossings (fail-soft, fire-and-forget).
     this.ctx.on("usage-cost/budget-warn", (s) => void this.notifier.notify(s, "warn"));
     this.ctx.on("usage-cost/budget-over", (s) => void this.notifier.notify(s, "over"));
+
+    // Hard-quota enforcement: short-circuit new model calls when over budget.
+    this.ctx.on("llm/stream", (options, next) => {
+      const status = this.latestStatus;
+      if (!status || !status.blocked) return next();
+      if (status.hardAction === "steer-to-cheaper-model") {
+        // Frozen loop requests cannot be rewritten; steer only hand-built calls.
+        const cheaper = isAgentLoopRequest(options) ? null : this.steerToCheaper(options);
+        if (cheaper) {
+          options.provider = cheaper.provider;
+          options.model = cheaper.model;
+          return next();
+        }
+      }
+      return this.blockedStream(status);
+    });
+  }
+
+  /** A single terminal `finish` error chunk that aborts the model call. */
+  private blockedStream(status: BudgetStatus): AsyncIterable<StreamChunk> {
+    return (async function* () {
+      yield {
+        type: "finish",
+        reason: {
+          kind: "error",
+          failure: {
+            message: `budget exhausted: spent $${status.spentUsd.toFixed(2)} of $${status.budgetUsd.toFixed(2)}`,
+            code: "BUDGET_EXHAUSTED",
+          },
+        },
+      } satisfies StreamChunk;
+    })();
+  }
+
+  /** Cheapest same-provider model in the catalog (by input+output rate). */
+  private steerToCheaper(options: GenerateOptions): { provider: string; model: string } | null {
+    const prefix = `${options.provider}/`;
+    const current = `${options.provider}/${options.model}`;
+    let best: { key: string; cost: number } | null = null;
+    for (const [key, price] of Object.entries(this.catalog)) {
+      if (!key.startsWith(prefix) || key === current) continue;
+      const cost = price.inputPerM + price.outputPerM;
+      if (best === null || cost < best.cost) best = { key, cost };
+    }
+    if (!best) return null;
+    const slash = best.key.indexOf("/");
+    return { provider: best.key.slice(0, slash), model: best.key.slice(slash + 1) };
   }
 
   private adopt(sessionId: SessionId, workspaceKey: string, view: CostUsageView): void {
