@@ -25,15 +25,6 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
-/** Day-granularity bucket key (UTC): `YYYY-MM-DD`. */
-export function dayKeyOf(timeMs: number): string {
-  const d = new Date(timeMs);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(
-    2,
-    "0",
-  )}-${String(d.getUTCDate()).padStart(2, "0")}`;
-}
-
 export function periodKeyOf(
   period: BudgetConfig["period"],
   timeMs: number,

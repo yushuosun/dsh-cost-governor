@@ -1,34 +1,28 @@
 /**
  * dsh-cost-governor — cost governance & budget enforcement for DeepSeek Harness.
  *
- * Registers the `costUsage` projection (raw per-model token buckets) and runs a
- * live ledger that prices those buckets against a multi-provider catalog,
- * enforces a period budget with soft/hard thresholds, and emits budget events.
+ * Registers the `costUsage` projection (raw per-model + per-day token buckets)
+ * and derives a cost ledger from it: the service seeds from every live session
+ * on boot, then follows the projection change feed, so figures survive a
+ * restart and never drift from the durable fold.
  *
  * @module dsh-cost-governor
  */
 import { Service, type Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
-import type { SessionEvent, SessionId } from "@deepseek-ai/dsh-session";
+import type { SessionId } from "@deepseek-ai/dsh-session";
 import {
   costUsageProjectionDefinition,
-  modelKey,
-  usageToBuckets,
+  type CostUsageView,
 } from "./projection/cost-usage.js";
 import { DEFAULT_PRICE_CATALOG } from "./pricing/catalog.js";
 import type { ModelPrice } from "./pricing/price.js";
 import { CostLedger } from "./governor/ledger.js";
-import { BudgetGovernor, dayKeyOf, periodKeyOf } from "./governor/budget.js";
+import { BudgetGovernor, periodKeyOf } from "./governor/budget.js";
 import { Notifier } from "./governor/notify.js";
 import type { BudgetConfig, BudgetStatus } from "./types.js";
 
 export const name = "cost-governor";
-
-/** Minimal structural view of a live session, avoiding a hard `Session` import. */
-interface SessionShape {
-  id: SessionId;
-  header?: { cwd?: string };
-}
 
 const priceSchema = z.object({
   inputPerM: z.number().min(0).required(),
@@ -77,21 +71,18 @@ export interface CostGovernorConfig {
 }
 
 export class CostGovernor extends Service {
-  static inject = ["sessionProjections"];
+  static inject = ["sessionProjections", "sessions"];
   static Config = Config;
 
   private readonly config: CostGovernorConfig;
   private readonly ledger: CostLedger;
   private readonly governor: BudgetGovernor;
   private readonly notifier: Notifier;
-  private readonly currentModelBySession = new Map<SessionId, string>();
   private latestStatus: BudgetStatus | null = null;
 
   constructor(ctx: Context, config: CostGovernorConfig) {
     super(ctx, "usageCost");
     this.config = config;
-    // Merge user overrides over the built-in catalog (no schema default, so a
-    // partial catalog only replaces the models the user names).
     const catalog = { ...DEFAULT_PRICE_CATALOG, ...(config.priceCatalog ?? {}) };
     this.ledger = new CostLedger(catalog);
     this.governor = new BudgetGovernor(ctx, config.budget);
@@ -99,52 +90,30 @@ export class CostGovernor extends Service {
   }
 
   async [Service.init]() {
-    // Register the durable projection (removed automatically on unload).
+    // Durable projection (removed automatically on unload).
     this.ctx.sessionProjections.register(costUsageProjectionDefinition);
 
-    // Live hot path: fold the same events the projection folds.
-    this.ctx.on("session/event", (session, event) =>
-      this.onEvent(session as SessionShape, event),
-    );
+    // Cold-start seed: every live session's already-folded view.
+    for (const session of this.ctx.sessions.list()) {
+      const view = this.ctx.sessionProjections.snapshot(session).values
+        .costUsage as CostUsageView | undefined;
+      if (view) this.adopt(session.id, session.header.cwd ?? "default", view);
+    }
+
+    // Live feed: replace a session's contribution whenever its fold changes.
+    this.ctx.sessionProjections.onChanged((session, key, value) => {
+      if (key !== "costUsage") return;
+      this.adopt(session.id, session.header.cwd ?? "default", value as CostUsageView);
+    });
 
     // Notify on threshold crossings (fail-soft, fire-and-forget).
     this.ctx.on("usage-cost/budget-warn", (s) => void this.notifier.notify(s, "warn"));
     this.ctx.on("usage-cost/budget-over", (s) => void this.notifier.notify(s, "over"));
-
-    this.ctx.effect(() => () => this.currentModelBySession.clear(), "cost-governor.cleanup");
   }
 
-  private onEvent(session: SessionShape, event: SessionEvent): void {
-    switch (event.type) {
-      case "request/context":
-        this.currentModelBySession.set(
-          session.id,
-          modelKey(event.data.provider, event.data.model),
-        );
-        break;
-      case "request/header": {
-        const cfg = event.data.header.config;
-        this.currentModelBySession.set(session.id, modelKey(cfg.provider, cfg.model));
-        break;
-      }
-      case "assistant/message": {
-        const usage = event.data.usage;
-        const mk = this.currentModelBySession.get(session.id);
-        if (usage === undefined || mk === undefined) break;
-        const workspaceKey = session.header?.cwd ?? "default";
-        this.ledger.record(
-          session.id,
-          mk,
-          usageToBuckets(usage),
-          dayKeyOf(event.time),
-          workspaceKey,
-        );
-        this.latestStatus = this.governor.update(this.currentPeriodSpend());
-        break;
-      }
-      default:
-        break;
-    }
+  private adopt(sessionId: SessionId, workspaceKey: string, view: CostUsageView): void {
+    this.ledger.setSession(sessionId, workspaceKey, view);
+    this.latestStatus = this.governor.update(this.currentPeriodSpend());
   }
 
   /** Sum cost over every ledger day that falls in the current budget period. */

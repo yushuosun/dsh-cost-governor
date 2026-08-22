@@ -1,43 +1,45 @@
 /**
- * In-memory cost ledger: the live hot path that accumulates raw token buckets
- * per session / per model / per day / per workspace, and derives USD cost on
- * demand from the active price catalog (so price edits re-price instantly).
+ * Cost ledger — a DERIVED aggregate over the `costUsage` projection.
  *
- * The ledger shares its fold logic with the `costUsage` projection (both call
- * the same pure `addUsage`), so live figures and the durable projection cannot
- * drift. The projection remains the replay/cold-read source of truth.
+ * The ledger holds one contribution per live session (its `byModel`/`byDay`
+ * view + workspace key), set wholesale from the projection change feed and
+ * seeded on cold start. Every rollup is computed on demand by summing those
+ * contributions against the active price catalog, so there is exactly one
+ * source of truth (the projection) and no parallel fold to drift.
  *
  * @module dsh-cost-governor/governor
  */
 import type { SessionId } from "@deepseek-ai/dsh-session";
-import { emptyBuckets, type TokenBuckets } from "../projection/cost-usage.js";
+import {
+  emptyBuckets,
+  type BucketMap,
+  type CostUsageView,
+  type DayBucketMap,
+} from "../projection/cost-usage.js";
 import { computeViewCost, type PriceCatalog } from "../pricing/price.js";
 import type { CostRollup, ModelAggregate } from "../types.js";
 
-export interface BucketMap {
-  [modelKey: string]: TokenBuckets;
+interface SessionContribution {
+  workspaceKey: string;
+  byModel: BucketMap;
+  byDay: DayBucketMap;
 }
 
-function addBuckets(target: TokenBuckets, source: TokenBuckets): TokenBuckets {
-  return {
-    input: target.input + source.input,
-    output: target.output + source.output,
-    cacheRead: target.cacheRead + source.cacheRead,
-    cacheWrite: target.cacheWrite + source.cacheWrite,
-    reasoning: target.reasoning + source.reasoning,
-  };
-}
-
-function addInto(map: BucketMap, key: string, buckets: TokenBuckets): void {
-  const prev = map[key] ?? emptyBuckets();
-  map[key] = addBuckets(prev, buckets);
+function addInto(target: BucketMap, source: BucketMap): void {
+  for (const [key, buckets] of Object.entries(source)) {
+    const prev = target[key] ?? emptyBuckets();
+    target[key] = {
+      input: prev.input + buckets.input,
+      output: prev.output + buckets.output,
+      cacheRead: prev.cacheRead + buckets.cacheRead,
+      cacheWrite: prev.cacheWrite + buckets.cacheWrite,
+      reasoning: prev.reasoning + buckets.reasoning,
+    };
+  }
 }
 
 /** Fold a bucket map into a rollup using the active catalog. */
-export function rollup(
-  map: BucketMap,
-  catalog: PriceCatalog,
-): CostRollup {
+function rollup(map: BucketMap, catalog: PriceCatalog): CostRollup {
   const { total, perModel, unpriced } = computeViewCost(map, catalog);
   const aggregates: ModelAggregate[] = Object.entries(map)
     .map(([key, buckets]) => {
@@ -73,71 +75,78 @@ export function rollup(
 }
 
 export class CostLedger {
-  private bySession = new Map<SessionId, BucketMap>();
-  private byModel: BucketMap = {};
-  private byDay = new Map<string, BucketMap>();
-  private byWorkspace = new Map<string, BucketMap>();
+  private sessions = new Map<SessionId, SessionContribution>();
 
   constructor(private readonly catalog: PriceCatalog) {}
 
-  /** Get-or-create a per-key bucket map. */
-  private bucketMap(map: Map<string, BucketMap>, key: string): BucketMap {
-    let m = map.get(key);
-    if (!m) {
-      m = {};
-      map.set(key, m);
-    }
-    return m;
+  /** Replace one session's whole contribution (projection view + workspace). */
+  setSession(sessionId: SessionId, workspaceKey: string, view: CostUsageView): void {
+    this.sessions.set(sessionId, {
+      workspaceKey,
+      byModel: view.byModel,
+      byDay: view.byDay,
+    });
   }
 
-  /** Record one final usage sample attributed to a model key. */
-  record(
-    sessionId: SessionId,
-    modelKey: string,
-    buckets: TokenBuckets,
-    dayKey: string,
-    workspaceKey: string,
-  ): void {
-    addInto(this.bucketMap(this.bySession, sessionId), modelKey, buckets);
-    addInto(this.byModel, modelKey, buckets);
-    addInto(this.bucketMap(this.byDay, dayKey), modelKey, buckets);
-    addInto(this.bucketMap(this.byWorkspace, workspaceKey), modelKey, buckets);
+  /** Drop a session that left the store. */
+  removeSession(sessionId: SessionId): void {
+    this.sessions.delete(sessionId);
   }
 
-  sessionRollup(sessionId: SessionId): CostRollup {
-    return rollup(this.bySession.get(sessionId) ?? {}, this.catalog);
+  private byModelTotal(): BucketMap {
+    const total: BucketMap = {};
+    for (const s of this.sessions.values()) addInto(total, s.byModel);
+    return total;
   }
 
-  globalRollup(): CostRollup {
-    return rollup(this.byModel, this.catalog);
-  }
-
-  periodRollup(dayKey: string): CostRollup {
-    return rollup(this.byDay.get(dayKey) ?? {}, this.catalog);
-  }
-
-  workspaceRollup(workspaceKey: string): CostRollup {
-    return rollup(this.byWorkspace.get(workspaceKey) ?? {}, this.catalog);
-  }
-
-  /** Sum of cost over a set of period keys (e.g. every day in the current month). */
-  spendAcross(dayKeys: string[]): number {
-    let total = 0;
-    for (const key of dayKeys) {
-      total += computeViewCost(this.byDay.get(key) ?? {}, this.catalog).total;
+  private byDayTotal(): DayBucketMap {
+    const total: DayBucketMap = {};
+    for (const s of this.sessions.values()) {
+      for (const [day, map] of Object.entries(s.byDay)) {
+        const t = (total[day] ??= {});
+        addInto(t, map);
+      }
     }
     return total;
   }
 
-  /** All day keys, sorted ascending. */
-  dayKeys(): string[] {
-    return [...this.byDay.keys()].sort();
+  sessionRollup(sessionId: SessionId): CostRollup {
+    const s = this.sessions.get(sessionId);
+    return rollup(s?.byModel ?? {}, this.catalog);
   }
 
-  /** CSV export of the per-model global rollup. */
+  globalRollup(): CostRollup {
+    return rollup(this.byModelTotal(), this.catalog);
+  }
+
+  /** Sum of cost over the given day keys (the current budget period). */
+  spendAcross(dayKeys: string[]): number {
+    const byDay = this.byDayTotal();
+    let total = 0;
+    for (const key of dayKeys) {
+      total += computeViewCost(byDay[key] ?? {}, this.catalog).total;
+    }
+    return total;
+  }
+
+  workspaceRollup(workspaceKey: string): CostRollup {
+    const map: BucketMap = {};
+    for (const s of this.sessions.values()) {
+      if (s.workspaceKey === workspaceKey) addInto(map, s.byModel);
+    }
+    return rollup(map, this.catalog);
+  }
+
+  /** All day keys across every session, sorted ascending. */
+  dayKeys(): string[] {
+    return Object.keys(this.byDayTotal()).sort();
+  }
+
+  /** CSV export of the global per-model rollup. */
   exportCsv(): string {
     const r = this.globalRollup();
-    const header = "provider,model,input_tokens,output_tokens,cache_read,cache_write,reasoning,cost_usd";
+    const header =
+      "provider,model,input_tokens,output_tokens,cache_read,cache_write,reasoning,cost_usd";
     const rows = r.byModel.map((m) =>
       [
         m.provider,
