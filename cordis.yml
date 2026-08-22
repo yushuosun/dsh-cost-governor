@@ -1,0 +1,19 @@
+# dsh-cost-governor composition example.
+# Add this row to your DSH composition (cordis.yml) to enable cost governance.
+
+# - name: dsh-cost-governor
+#   config:
+#     currency: USD
+#     budget:
+#       period: monthly            # daily | weekly | monthly | unlimited
+#       budgetUsd: 20              # monthly cap in USD
+#       warnRatio: 0.8             # soft-warn at 80%
+#       hardRatio: 1.0             # hard ceiling at 100%
+#       hardAction: notify-only    # notify-only | block-new-requests | steer-to-cheaper-model
+#     notifyWebhook: ""            # optional Feishu / DingTalk / Slack webhook URL
+#     priceCatalog:                # optional override; built-in catalog is the fallback
+#       "deepseek/deepseek-chat":
+#         inputPerM: 0.27
+#         outputPerM: 1.10
+#         cacheReadPerM: 0.07
+#         cacheWritePerM: 0.27

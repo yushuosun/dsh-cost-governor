@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cost Governance — dsh-cost-governor preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --cg-ink: #0a0d12;
+    --cg-panel: #10141c;
+    --cg-panel-2: #141a24;
+    --cg-line: #222b3a;
+    --cg-line-soft: #1a2230;
+    --cg-text: #e8ecf3;
+    --cg-muted: #7e8a9d;
+    --cg-faint: #566078;
+    --cg-accent: #2dd4a7;
+    --cg-accent-ink: #07251c;
+    --cg-accent-dim: rgba(45, 212, 167, 0.13);
+    --cg-amber: #f5b840;
+    --cg-amber-dim: rgba(245, 184, 64, 0.14);
+    --cg-danger: #fb5d6d;
+    --cg-danger-dim: rgba(251, 93, 109, 0.14);
+    --cg-blue: #6aa5ff;
+    --cg-font-display: 'Fraunces', 'Georgia', 'Times New Roman', serif;
+    --cg-font-mono: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+    --cg-radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    font-family: var(--cg-font-mono);
+    background:
+      radial-gradient(1200px 520px at 88% -12%, rgba(45, 212, 167, 0.07), transparent 60%),
+      radial-gradient(900px 440px at -8% 112%, rgba(106, 165, 255, 0.06), transparent 55%),
+      var(--cg-ink);
+    color: var(--cg-text);
+    line-height: 1.5;
+    padding: 40px 24px 64px;
+    display: flex;
+    justify-content: center;
+  }
+  .cg-root { width: 100%; max-width: 980px; }
+
+  .cg-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 26px; flex-wrap: wrap; }
+  .cg-eyebrow { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--cg-accent); margin: 0 0 6px; }
+  .cg-title { font-family: var(--cg-font-display); font-weight: 500; font-size: 32px; letter-spacing: -0.01em; margin: 0; }
+  .cg-subtitle { color: var(--cg-muted); font-size: 13px; margin: 4px 0 0; }
+  .cg-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .cg-btn {
+    font-family: var(--cg-font-mono); font-size: 12px; color: var(--cg-text);
+    background: var(--cg-panel-2); border: 1px solid var(--cg-line); border-radius: 8px;
+    padding: 8px 14px; cursor: pointer; transition: border-color .15s, background .15s, transform .1s;
+  }
+  .cg-btn:hover { border-color: var(--cg-accent); }
+  .cg-btn:active { transform: translateY(1px); }
+  .cg-btn--primary { background: var(--cg-accent); color: var(--cg-accent-ink); border-color: transparent; }
+  .cg-btn--primary:hover { background: #3ce0b6; }
+  .cg-btn--ghost { background: transparent; }
+
+  .cg-seg { display: inline-flex; border: 1px solid var(--cg-line); border-radius: 8px; overflow: hidden; }
+  .cg-seg button { font-family: var(--cg-font-mono); font-size: 11.5px; background: transparent; color: var(--cg-muted); border: none; padding: 7px 13px; cursor: pointer; transition: background .15s, color .15s; }
+  .cg-seg button + button { border-left: 1px solid var(--cg-line); }
+  .cg-seg button[data-on="true"] { background: var(--cg-panel-2); color: var(--cg-text); }
+  .cg-seg button:hover { color: var(--cg-text); }
+
+  .cg-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 22px; }
+  .cg-kpi {
+    background: linear-gradient(180deg, var(--cg-panel-2), var(--cg-panel));
+    border: 1px solid var(--cg-line-soft); border-radius: var(--cg-radius);
+    padding: 18px 20px; position: relative; overflow: hidden;
+    box-shadow: 0 12px 32px -20px rgba(0,0,0,.9);
+  }
+  .cg-kpi::after { content:""; position:absolute; inset:0 0 auto 0; height:2px; background:linear-gradient(90deg, transparent, var(--cg-accent), transparent); opacity:.55; }
+  .cg-kpi--warn::after { background:linear-gradient(90deg, transparent, var(--cg-amber), transparent); }
+  .cg-kpi--over::after { background:linear-gradient(90deg, transparent, var(--cg-danger), transparent); }
+  .cg-kpi__label { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--cg-muted); margin-bottom: 12px; }
+  .cg-kpi__value { font-family: var(--cg-font-display); font-weight: 400; font-size: 36px; letter-spacing: -.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .cg-kpi__value .cur { font-size: 19px; color: var(--cg-muted); margin-right: 2px; }
+  .cg-kpi__delta { margin-top: 9px; font-size: 11.5px; color: var(--cg-faint); }
+
+  .cg-panel { background: var(--cg-panel); border: 1px solid var(--cg-line-soft); border-radius: var(--cg-radius); overflow: hidden; margin-bottom: 18px; box-shadow: 0 12px 32px -20px rgba(0,0,0,.9); }
+  .cg-panel__head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--cg-line-soft); }
+  .cg-panel__title { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--cg-muted); }
+
+  .cg-bar { height: 8px; border-radius: 99px; background: var(--cg-line-soft); overflow: hidden; position: relative; }
+  .cg-bar__fill { height: 100%; border-radius: 99px; background: var(--cg-accent); transition: width .7s cubic-bezier(.22,1,.36,1); position: relative; }
+  .cg-bar__fill::after { content:""; position:absolute; inset:0; background:linear-gradient(90deg, transparent, rgba(255,255,255,.3), transparent); animation: shimmer 2.2s linear infinite; transform: translateX(-100%); }
+  @keyframes shimmer { to { transform: translateX(100%); } }
+  .cg-bar--warn .cg-bar__fill { background: var(--cg-amber); }
+  .cg-bar--over .cg-bar__fill { background: var(--cg-danger); }
+
+  .cg-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .cg-table th { text-align: left; font-weight: 500; color: var(--cg-faint); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; padding: 11px 18px; border-bottom: 1px solid var(--cg-line-soft); }
+  .cg-table td { padding: 12px 18px; border-bottom: 1px solid var(--cg-line-soft); font-variant-numeric: tabular-nums; }
+  .cg-table tbody tr:last-child td { border-bottom: none; }
+  .cg-table tbody tr { transition: background .12s; }
+  .cg-table tbody tr:hover { background: var(--cg-panel-2); }
+  .num { text-align: right; }
+  .cg-model { font-family: var(--cg-font-display); font-size: 14px; }
+  .cg-model small { font-family: var(--cg-font-mono); color: var(--cg-faint); font-size: 10.5px; display: block; }
+  .cg-minibar { display: inline-block; width: 90px; height: 5px; border-radius: 99px; background: var(--cg-line-soft); vertical-align: middle; margin-right: 8px; }
+  .cg-minibar span { display: block; height: 100%; border-radius: 99px; background: var(--cg-accent); }
+
+  .cg-chip { display: inline-block; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; padding: 3px 8px; border-radius: 5px; }
+  .cg-chip--ok { color: var(--cg-accent); background: var(--cg-accent-dim); }
+  .cg-chip--warn { color: var(--cg-amber); background: var(--cg-amber-dim); }
+  .cg-chip--over { color: var(--cg-danger); background: var(--cg-danger-dim); }
+
+  .cg-bars { display: flex; align-items: flex-end; gap: 5px; height: 132px; padding: 18px 18px 14px; }
+  .cg-day { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 7px; min-width: 0; }
+  .cg-day__col { width: 100%; max-width: 30px; border-radius: 4px 4px 2px 2px; background: linear-gradient(180deg, var(--cg-accent), rgba(45,212,167,.22)); transition: opacity .15s, transform .15s; transform-origin: bottom; }
+  .cg-day:hover .cg-day__col { background: linear-gradient(180deg, #3ce0b6, rgba(45,212,167,.4)); transform: scaleY(1.04); }
+  .cg-day__label { font-size: 9px; color: var(--cg-faint); white-space: nowrap; }
+  .cg-day__tip { display: none; position: absolute; }
+  .cg-note { font-size: 11.5px; color: var(--cg-muted); padding: 13px 18px; }
+  .cg-note a { color: var(--cg-blue); text-decoration: none; }
+  .cg-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 18px; }
+  @media (max-width: 760px) { .cg-grid { grid-template-columns: 1fr; } }
+
+  .cg-rise { opacity: 0; transform: translateY(10px); animation: rise .55s cubic-bezier(.22,1,.36,1) forwards; }
+  @keyframes rise { to { opacity: 1; transform: none; } }
+
+  .cg-footer { text-align: center; color: var(--cg-faint); font-size: 11px; margin-top: 6px; }
+  .cg-footer code { color: var(--cg-muted); }
+</style>
+</head>
+<body>
+<div class="cg-root" id="root">
+  <header class="cg-header cg-rise">
+    <div>
+      <p class="cg-eyebrow">Usage &amp; Cost</p>
+      <h1 class="cg-title">Cost Governance</h1>
+      <p class="cg-subtitle">Multi-provider spend, budget enforcement, and trends.</p>
+    </div>
+    <div class="cg-actions">
+      <div class="cg-seg" id="periodSeg" role="tablist" aria-label="Budget period"></div>
+      <button class="cg-btn" id="btnBudget">Budget</button>
+      <button class="cg-btn" id="btnPrices">Prices</button>
+      <button class="cg-btn cg-btn--primary" id="btnExport">Export CSV</button>
+    </div>
+  </header>
+
+  <section class="cg-kpis" id="kpis"></section>
+
+  <section class="cg-panel cg-rise" style="animation-delay:240ms">
+    <div class="cg-panel__head">
+      <span class="cg-panel__title">Budget progress</span>
+      <span class="cg-chip cg-chip--ok" id="stateChip">ok</span>
+    </div>
+    <div style="padding:18px">
+      <div class="cg-bar" id="budgetBar"><div class="cg-bar__fill" id="budgetFill" style="width:0%"></div></div>
+      <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:11.5px;color:var(--cg-muted)">
+        <span id="barPct">0.0% of budget</span>
+        <span id="barLeft">$0.00 left</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="cg-grid">
+    <section class="cg-panel cg-rise" style="animation-delay:300ms">
+      <div class="cg-panel__head"><span class="cg-panel__title">Spend by model</span></div>
+      <table class="cg-table"><thead><tr><th>Model</th><th class="num">Tokens</th><th class="num">Cost</th></tr></thead><tbody id="modelRows"></tbody></table>
+    </section>
+    <section class="cg-panel cg-rise" style="animation-delay:360ms">
+      <div class="cg-panel__head"><span class="cg-panel__title">Daily spend</span></div>
+      <div class="cg-bars" id="dailyBars"></div>
+    </section>
+  </div>
+
+  <section class="cg-panel cg-rise" style="animation-delay:420ms">
+    <div class="cg-panel__head"><span class="cg-panel__title">Savings tip</span></div>
+    <div class="cg-note" id="tip">deepseek-chat is <b>8.2×</b> cheaper per token than claude-3-7-sonnet for this workload.</div>
+  </section>
+
+  <p class="cg-footer cg-rise" style="animation-delay:480ms">dsh-cost-governor · preview build · <code>MIT</code></p>
+</div>
+
+<script>
+  const $ = (s) => document.querySelector(s);
+  const fmtUsd = (v) => "$" + v.toFixed(2);
+  const fmtTok = (n) => n >= 1e6 ? (n/1e6).toFixed(2)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"k" : String(Math.round(n));
+
+  // ── Mock data per period ─────────────────────────────────────────────
+  const DATA = {
+    daily:   { spent: 0.86, budget: 5,  models: [
+      { k: "deepseek/deepseek-chat", p: "deepseek", m: "deepseek-chat", tok: 210000, cost: 0.86 }], days: [] },
+    weekly:  { spent: 4.91, budget: 12, models: [
+      { k: "deepseek/deepseek-chat", p: "deepseek", m: "deepseek-chat", tok: 890000, cost: 2.19 },
+      { k: "anthropic/claude-3-7-sonnet", p: "anthropic", m: "claude-3-7-sonnet", tok: 132000, cost: 1.23 },
+      { k: "qwen/qwen-plus", p: "qwen", m: "qwen-plus", tok: 620000, cost: 0.45 },
+      { k: "openai/gpt-4.1-mini", p: "openai", m: "gpt-4.1-mini", tok: 410000, cost: 1.04 }], days: [0.4,0.9,0.6,1.52,0.7,0.4,0.39] },
+    monthly: { spent: 3.42, budget: 20, models: [
+      { k: "deepseek/deepseek-chat", p: "deepseek", m: "deepseek-chat", tok: 492000, cost: 2.19 },
+      { k: "anthropic/claude-3-7-sonnet", p: "anthropic", m: "claude-3-7-sonnet", tok: 132000, cost: 1.23 },
+      { k: "qwen/qwen-plus", p: "qwen", m: "qwen-plus", tok: 304000, cost: 0.12 }], days: [0.1,0.22,0.08,0.4,0.9,0.6,1.52,0.7,0.4,0.39,0.18,0.05,0.12,0.3] },
+    unlimited: { spent: 11.74, budget: 999, models: [
+      { k: "deepseek/deepseek-chat", p: "deepseek", m: "deepseek-chat", tok: 2810000, cost: 7.4 },
+      { k: "deepseek/deepseek-reasoner", p: "deepseek", m: "deepseek-reasoner", tok: 840000, cost: 2.1 },
+      { k: "anthropic/claude-3-7-sonnet", p: "anthropic", m: "claude-3-7-sonnet", tok: 210000, cost: 2.24 }], days: [0.3,0.4,0.6,0.9,1.1,0.8,1.4,0.7,0.5,0.9,1.2,0.6,0.8,1.24] },
+  };
+
+  let period = "monthly";
+  const dayLabels = ["01","02","03","04","05","06","07","08","09","10","11","12","13","14"];
+
+  function renderPeriodSeg() {
+    const seg = $("#periodSeg");
+    seg.innerHTML = "";
+    for (const p of ["daily","weekly","monthly","unlimited"]) {
+      const b = document.createElement("button");
+      b.textContent = p; b.dataset.on = String(p === period);
+      b.onclick = () => { period = p; render(); };
+      seg.appendChild(b);
+    }
+  }
+
+  function countUp(el, target, dur = 700, prefix = "") {
+    const start = performance.now();
+    const step = (t) => {
+      const p = Math.min(1, (t - start) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = prefix + (target * eased).toFixed(2);
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  function render() {
+    const d = DATA[period];
+    renderPeriodSeg();
+
+    // KPIs
+    const ratio = d.budget > 0 ? d.spent / d.budget : 0;
+    const remaining = d.budget - d.spent;
+    const totalTokens = d.models.reduce((s, m) => s + m.tok, 0);
+    const eff = totalTokens > 0 ? (d.spent / totalTokens) * 1000 : 0;
+    const tone = ratio >= 1 ? "over" : ratio >= 0.8 ? "warn" : "";
+
+    const kpis = $("#kpis");
+    kpis.innerHTML = "";
+    const mk = (label, tone, sub, delay) => {
+      const el = document.createElement("div");
+      el.className = "cg-kpi cg-rise" + (tone ? " cg-kpi--" + tone : "");
+      el.style.animationDelay = delay + "ms";
+      el.innerHTML = `<div class="cg-kpi__label">${label}</div><div class="cg-kpi__value"><span class="cur">$</span><span class="v">0.00</span></div><div class="cg-kpi__delta">${sub}</div>`;
+      kpis.appendChild(el);
+      return el.querySelector(".v");
+    };
+    const vSpent = mk("Spent this period", tone, fmtTok(totalTokens) + " tokens", 0);
+    const vBudget = mk("Budget", "", period + " cap", 60);
+    const vRemain = mk("Remaining", remaining < 0 ? "over" : "", remaining >= 0 ? "on track" : "over budget", 120);
+    const vEff = mk("Cost / 1k tokens", "", "blended efficiency", 180);
+    countUp(vSpent, d.spent); vBudget.textContent = d.budget.toFixed(2);
+    countUp(vRemain, Math.max(0, remaining)); countUp(vEff, eff);
+
+    // Budget bar
+    const fill = $("#budgetFill");
+    fill.style.width = Math.min(100, ratio * 100) + "%";
+    $("#budgetBar").className = "cg-bar" + (tone ? " cg-bar--" + tone : "");
+    $("#barPct").textContent = (ratio * 100).toFixed(1) + "% of budget";
+    $("#barLeft").textContent = fmtUsd(remaining) + " left";
+    const chip = $("#stateChip");
+    chip.textContent = ratio >= 1 ? "over" : ratio >= 0.8 ? "warn" : "ok";
+    chip.className = "cg-chip cg-chip--" + (ratio >= 1 ? "over" : ratio >= 0.8 ? "warn" : "ok");
+
+    // Model table
+    const maxTok = Math.max(...d.models.map((m) => m.tok), 1);
+    $("#modelRows").innerHTML = d.models.map((m) => `
+      <tr><td><span class="cg-model">${m.m}<small>${m.p}</small></span></td>
+      <td class="num"><span class="cg-minibar"><span style="width:${Math.max(2, m.tok/maxTok*100)}%"></span></span>${fmtTok(m.tok)}</td>
+      <td class="num">${fmtUsd(m.cost)}</td></tr>`).join("");
+
+    // Daily bars
+    const maxDay = Math.max(...d.days, 0.0001);
+    $("#dailyBars").innerHTML = d.days.map((v, i) => `
+      <div class="cg-day" title="day ${dayLabels[i]}: ${fmtUsd(v)}">
+        <div class="cg-day__col" style="height:${Math.max(4, v/maxDay*88)}px"></div>
+        <span class="cg-day__label">${dayLabels[i]}</span>
+      </div>`).join("");
+  }
+
+  $("#btnExport").onclick = () => {
+    const d = DATA[period];
+    const rows = [["provider","model","tokens","cost_usd"], ...d.models.map((m) => [m.p, m.m, m.tok, m.cost.toFixed(4)])];
+    const csv = rows.map((r) => r.join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "cost-governor.csv"; a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  $("#btnBudget").onclick = () => alert("Budget editor — wired to the settings namespace in the real plugin.");
+  $("#btnPrices").onclick = () => alert("Price editor — an editable per-model catalog in the real plugin.");
+
+  render();
+</script>
+</body>
+</html>
