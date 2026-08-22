@@ -60,7 +60,7 @@ function demoRollup(): CostRollup {
 }
 
 export function DashboardContainer(props: DashboardContainerProps) {
-  const [rollup, setRollup] = useState<CostRollup | null>(demoRollup());
+  const [rollup] = useState<CostRollup | null>(demoRollup());
   const [status, setStatus] = useState<BudgetStatus | null>({
     period: "monthly", budgetUsd: 20, spentUsd: 3.42, remainingUsd: 16.58,
     ratio: 0.171, state: "ok", hardAction: "notify-only", blocked: false,

@@ -80,6 +80,16 @@ export class CostLedger {
 
   constructor(private readonly catalog: PriceCatalog) {}
 
+  /** Get-or-create a per-key bucket map. */
+  private bucketMap(map: Map<string, BucketMap>, key: string): BucketMap {
+    let m = map.get(key);
+    if (!m) {
+      m = {};
+      map.set(key, m);
+    }
+    return m;
+  }
+
   /** Record one final usage sample attributed to a model key. */
   record(
     sessionId: SessionId,
@@ -88,10 +98,10 @@ export class CostLedger {
     dayKey: string,
     workspaceKey: string,
   ): void {
-    addInto((this.bySession.get(sessionId) ??= {}), modelKey, buckets);
+    addInto(this.bucketMap(this.bySession, sessionId), modelKey, buckets);
     addInto(this.byModel, modelKey, buckets);
-    addInto((this.byDay.get(dayKey) ??= {}), modelKey, buckets);
-    addInto((this.byWorkspace.get(workspaceKey) ??= {}), modelKey, buckets);
+    addInto(this.bucketMap(this.byDay, dayKey), modelKey, buckets);
+    addInto(this.bucketMap(this.byWorkspace, workspaceKey), modelKey, buckets);
   }
 
   sessionRollup(sessionId: SessionId): CostRollup {

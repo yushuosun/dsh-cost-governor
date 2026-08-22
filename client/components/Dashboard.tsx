@@ -7,7 +7,7 @@
  */
 import { useEffect, useState } from "react";
 import { injectLedgerStyles } from "../theme";
-import { formatTokens, formatUsd } from "../format";
+import { formatPercent, formatTokens, formatUsd } from "../format";
 import type { BudgetPeriod, BudgetStatus, CostRollup } from "../../src/types";
 
 export interface DayPoint {

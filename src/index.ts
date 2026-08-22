@@ -65,7 +65,7 @@ export const Config = z.object({
     hardAction: "notify-only",
   }),
   notifyWebhook: z.string(),
-  priceCatalog: z.dict(priceSchema).default(DEFAULT_PRICE_CATALOG),
+  priceCatalog: z.dict(priceSchema),
 });
 
 /** Validated config shape received by the service. */
@@ -73,7 +73,7 @@ export interface CostGovernorConfig {
   currency: string;
   budget: BudgetConfig;
   notifyWebhook?: string;
-  priceCatalog: Record<string, ModelPrice>;
+  priceCatalog?: Record<string, ModelPrice>;
 }
 
 export class CostGovernor extends Service {
@@ -90,7 +90,10 @@ export class CostGovernor extends Service {
   constructor(ctx: Context, config: CostGovernorConfig) {
     super(ctx, "usageCost");
     this.config = config;
-    this.ledger = new CostLedger(config.priceCatalog);
+    // Merge user overrides over the built-in catalog (no schema default, so a
+    // partial catalog only replaces the models the user names).
+    const catalog = { ...DEFAULT_PRICE_CATALOG, ...(config.priceCatalog ?? {}) };
+    this.ledger = new CostLedger(catalog);
     this.governor = new BudgetGovernor(ctx, config.budget);
     this.notifier = new Notifier(config.notifyWebhook);
   }
