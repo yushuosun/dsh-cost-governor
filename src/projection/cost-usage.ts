@@ -36,9 +36,20 @@ export interface CostUsageView {
   byDay: DayBucketMap;
 }
 
+/** An early `usage` chunk sample not yet superseded by a final message. */
+interface PendingSample {
+  turn: number;
+  step: number;
+  /** Model that produced the sample (attribution survives a later route change). */
+  modelKey: string;
+  buckets: TokenBuckets;
+}
+
 interface CostUsageState extends CostUsageView {
   /** `provider/model` of the in-flight step's request; null before the first. */
   currentModel: string | null;
+  /** Last `usage` chunk for the open step (billed if the step ends without a final sample). */
+  pending: PendingSample | null;
 }
 
 /** UTC `YYYY-MM-DD` (must match `dayKeyOf` in governor/budget.ts). */
@@ -101,11 +112,21 @@ const bucketsSchema = z
   })
   .strict();
 
+const pendingSchema = z
+  .object({
+    turn: z.number().int().nonnegative(),
+    step: z.number().int().nonnegative(),
+    modelKey: z.string(),
+    buckets: bucketsSchema,
+  })
+  .strict();
+
 const stateSchema = z
   .object({
     byModel: z.record(z.string(), bucketsSchema),
     byDay: z.record(z.string(), z.record(z.string(), bucketsSchema)),
     currentModel: z.string().nullable(),
+    pending: pendingSchema.nullable(),
   })
   .strict();
 
@@ -144,7 +165,7 @@ export const costUsageProjectionDefinition: ProjectionDefinition<
 > = {
   key: "costUsage",
   schema: stateSchema,
-  init: () => ({ byModel: {}, byDay: {}, currentModel: null }),
+  init: () => ({ byModel: {}, byDay: {}, currentModel: null, pending: null }),
   apply: (state, event: SessionEvent) => {
     switch (event.type) {
       case "request/context":
@@ -156,22 +177,71 @@ export const costUsageProjectionDefinition: ProjectionDefinition<
         const cfg = event.data.header.config;
         return { ...state, currentModel: modelKey(cfg.provider, cfg.model) };
       }
+      case "assistant/chunk": {
+        const chunk = event.data.chunk;
+        if (chunk.type !== "usage" || state.currentModel === null) return state;
+        // Commit a still-pending sample from a DIFFERENT step (defensive; the
+        // step/end finally normally clears it first), then hold this step's
+        // early sample until its message or step-end.
+        let next = state;
+        if (
+          state.pending !== null &&
+          (state.pending.turn !== event.data.turn || state.pending.step !== event.data.step)
+        ) {
+          next = commit(
+            state,
+            state.pending.modelKey,
+            state.pending.buckets,
+            dayKeyOf(event.time),
+          );
+        }
+        return {
+          ...next,
+          pending: {
+            turn: event.data.turn,
+            step: event.data.step,
+            modelKey: state.currentModel,
+            buckets: usageToBuckets(chunk.usage),
+          },
+        };
+      }
       case "assistant/message": {
         const usage = event.data.usage;
-        if (usage === undefined || state.currentModel === null) return state;
-        return commit(
-          state,
-          state.currentModel,
-          usageToBuckets(usage),
-          dayKeyOf(event.time),
-        );
+        if (state.currentModel === null) return state;
+        if (usage !== undefined) {
+          // Final sample replaces the early chunk sample.
+          return {
+            ...commit(state, state.currentModel, usageToBuckets(usage), dayKeyOf(event.time)),
+            pending: null,
+          };
+        }
+        // No final sample (max-tokens / aborted): bill the early sample if any.
+        if (
+          state.pending !== null &&
+          state.pending.turn === event.data.turn &&
+          state.pending.step === event.data.step
+        ) {
+          return {
+            ...commit(state, state.pending.modelKey, state.pending.buckets, dayKeyOf(event.time)),
+            pending: null,
+          };
+        }
+        return state;
+      }
+      case "step/end": {
+        // A step closed without ever assembling a message: bill its early sample.
+        if (state.pending === null) return state;
+        return {
+          ...commit(state, state.pending.modelKey, state.pending.buckets, dayKeyOf(event.time)),
+          pending: null,
+        };
       }
       default:
         return state;
     }
   },
   view: (state) => ({ byModel: state.byModel, byDay: state.byDay }),
-  stateVersion: 2,
+  stateVersion: 3,
 };
 
 // Declaration merge: expose `costUsage` on the harness-wide projection table so
